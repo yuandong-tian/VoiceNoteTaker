@@ -5,8 +5,12 @@ This file holds the core functions of WhisperNote. It contains the following fun
 * convert_audio_file_to_format: This function is used to convert the audio file to a specific format.
 """
 import openai
+import os
 import io
 from pydub import AudioSegment
+
+openai.organization = os.environ.get("OPENAI_ORG")
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 def transcribe_voice_message(filename: str) -> str:
     """Invoke the Whisper ASR API to transcribe the voice message to text.
