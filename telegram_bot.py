@@ -13,6 +13,9 @@ OUTPUT_FORMAT = "mp3"
 telegram_api_token = os.environ.get('TELEGRAM_BOT_TOKEN')
 print(f'Bot token: {telegram_api_token}')
 
+telegram_allow_user_name = os.environ.get("TELEGRAM_ALLOW_USER")
+print(f"Allow user name: {telegram_allow_user_name}")
+
 async def start(update: Update, context: CallbackContext):
     await update.message.reply_text('Send me a voice message, and I will transcribe it for you. Note I am not a QA bot, and will not answer your questions. I will only listen to you and transcribe your voice message, with paraphrasing from GPT-4. Type /help for more information.')
 
@@ -56,16 +59,17 @@ async def clear(update: Update, context: CallbackContext):
     await update.message.reply_text("Your data has been cleared.")
 
 # TODO: send out daily summaries to users.
-
-async def warn_if_not_voice_message(update: Update, context: CallbackContext):
-    if not update.message.voice:
-        await update.message.reply_text("Please send me a voice message. I will transcribe it and paraphrase for you.")
-
-async def transcribe_voice_message(update: Update, context: CallbackContext):
+async def check_auth(update: Update, context: CallbackContext):
     chat_id = context._chat_id
     user_id = context._user_id
     member = await context.bot.get_chat_member(chat_id, user_id)
     user_full_name = member.user.full_name
+
+    if user_full_name != telegram_allow_user_name:
+        # not allowed.  
+        await update.message.reply_text(f"You ({user_full_name}) is not in the allowed user list.")
+        return None
+
     # We need to log the user info and histories in the user_data so we can send out daily summaries.
     # Check the help message for more details.
     if 'user_full_name' not in context.user_data:
@@ -74,6 +78,30 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
         context.user_data['user_id'] = user_id
     if 'history' not in context.user_data:
         context.user_data['history'] = []
+
+    return user_full_name
+
+async def handle_text_message(update: Update, context: CallbackContext):
+    user_full_name = await check_auth(update, context)
+    if user_full_name is None:
+        return 
+
+    text = update.message.text 
+    if text.startswith("https://arxiv.org/"):
+        reply = f"Receive arXiv: {text}"
+        print(f'[{user_full_name}] {reply}')
+        await update.message.reply_text(reply)
+    else:
+        await update.message.reply_text("I don't understand")
+
+async def warn_if_not_voice_message(update: Update, context: CallbackContext):
+    if not update.message.voice:
+        await update.message.reply_text("Please send me a voice message. I will transcribe it and paraphrase for you.")
+
+async def transcribe_voice_message(update: Update, context: CallbackContext):
+    user_full_name = await check_auth(update, context)
+    if user_full_name is None:
+        return 
     
     file_id = update.message.voice.file_id
     voice_file = await context.bot.get_file(file_id)
@@ -92,20 +120,25 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
     await update.message.reply_text("Transcribed text:")
     await update.message.reply_text(transcribed_text)
 
-    preprocessed_text = preprocess_text(transcribed_text)
-    print(f'[{user_full_name}] {preprocessed_text}')
-    result_obj = json.loads(preprocessed_text)
-    model = 'gpt-3.5-turbo' if result_obj['tag'] == '聊天' else 'gpt-4'
-    result_obj['model'] = model
-    result_obj['transcribed'] = transcribed_text
-    print(f'[{user_full_name}] {result_obj}')
-    paraphrased_text = paraphrase_text(result_obj['content'], model)
-    result_obj['paraphrased'] = paraphrased_text
-    result_obj['date'] = update.message.date
-    print(f'[{user_full_name}] {paraphrased_text}')
-    context.user_data['history'].append(result_obj)
-    await update.message.reply_text(f"Paraphrased using {model.upper()}:")
-    await update.message.reply_text(paraphrased_text)
+    use_paraphrase = False
+    
+    if use_paraphrase:
+        # output a json list with content and tag
+        preprocessed_text = preprocess_text(transcribed_text)
+        print(f'[{user_full_name}] {preprocessed_text}')
+        result_obj = json.loads(preprocessed_text)
+
+        model = 'gpt-3.5-turbo' if result_obj['tag'] == '聊天' else 'gpt-4'
+        result_obj['model'] = model
+        result_obj['transcribed'] = transcribed_text
+        print(f'[{user_full_name}] {result_obj}')
+        paraphrased_text = paraphrase_text(result_obj['content'], model)
+        result_obj['paraphrased'] = paraphrased_text
+        result_obj['date'] = update.message.date
+        print(f'[{user_full_name}] {paraphrased_text}')
+        context.user_data['history'].append(result_obj)
+        await update.message.reply_text(f"Paraphrased using {model.upper()}:")
+        await update.message.reply_text(paraphrased_text)
 
 def main():
     persistence = PicklePersistence(filepath="gpt_archive.pickle")
@@ -119,7 +152,8 @@ def main():
 
     # on non command i.e message
     application.add_handler(MessageHandler(filters.VOICE & ~filters.COMMAND, transcribe_voice_message))
-    application.add_handler(MessageHandler(~filters.VOICE & ~filters.COMMAND, warn_if_not_voice_message))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    application.add_handler(MessageHandler(~filters.VOICE & ~filters.TEXT & ~filters.COMMAND, warn_if_not_voice_message))
 
     # Run the bot until the user presses Ctrl-C
     print('Bot is running...')
