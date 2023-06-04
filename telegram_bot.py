@@ -1,7 +1,7 @@
 import os
 import tempfile
 import json
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import CommandHandler, MessageHandler, CallbackContext, Application, PicklePersistence
 import telegram.ext.filters as filters
 
@@ -160,12 +160,12 @@ def main():
     persistence = PicklePersistence(filepath="gpt_archive.pickle")
     application = Application.builder().token(telegram_api_token).persistence(persistence).build()
 
+    commands = [start, help, clear, data, toggle_writer]
+
+    application.set_my_commands([BotCommand(command=f.__name__, description=f.__doc__) for f in commands])
+
     # on different commands - answer in Telegram
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help))
-    application.add_handler(CommandHandler("clear", clear))
-    application.add_handler(CommandHandler("data", data))
-    application.add_handler(CommandHandler("toggle_writer", toggle_writer))
+    [ application.add_handler(CommandHandler(f.__name__, f)) for f in commands ]
 
     # on non command i.e message
     application.add_handler(MessageHandler(filters.VOICE & ~filters.COMMAND, transcribe_voice_message))
