@@ -16,6 +16,8 @@ print(f'Bot token: {telegram_api_token}')
 telegram_allow_user_name = os.environ.get("TELEGRAM_ALLOW_USER")
 print(f"Allow user name: {telegram_allow_user_name}")
 
+writer_mode = False
+
 async def start(update: Update, context: CallbackContext):
     await update.message.reply_text('Send me a voice message, and I will transcribe it for you. Note I am not a QA bot, and will not answer your questions. I will only listen to you and transcribe your voice message, with paraphrasing from GPT-4. Type /help for more information.')
 
@@ -57,6 +59,17 @@ async def clear(update: Update, context: CallbackContext):
     print(f'[{user_full_name}] /clear')
     context.user_data.clear()
     await update.message.reply_text("Your data has been cleared.")
+
+async def toggle_writer(update: Update, context: CallbackContext):
+    """
+    Switch writer's mode.
+    """
+    user_full_name = await check_auth(update, context)
+    if user_full_name is None:
+        return 
+
+    writer_mode = not writer_mode
+    await update.message.reply_text(f"Writer's mode is set to be {writer_mode}")
 
 # TODO: send out daily summaries to users.
 async def check_auth(update: Update, context: CallbackContext):
@@ -120,9 +133,7 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
     await update.message.reply_text("Transcribed text:")
     await update.message.reply_text(transcribed_text)
 
-    use_paraphrase = False
-    
-    if use_paraphrase:
+    if writer_mode:
         # output a json list with content and tag
         preprocessed_text = preprocess_text(transcribed_text)
         print(f'[{user_full_name}] {preprocessed_text}')
@@ -149,6 +160,7 @@ def main():
     application.add_handler(CommandHandler("help", help))
     application.add_handler(CommandHandler("clear", clear))
     application.add_handler(CommandHandler("data", data))
+    application.add_handler(CommandHandler("toggle_writer", toggle_writer))
 
     # on non command i.e message
     application.add_handler(MessageHandler(filters.VOICE & ~filters.COMMAND, transcribe_voice_message))
