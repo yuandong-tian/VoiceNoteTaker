@@ -17,6 +17,7 @@ telegram_allow_user_name = os.environ.get("TELEGRAM_ALLOW_USER")
 print(f"Allow user name: {telegram_allow_user_name}")
 
 writer_mode = False
+print(f"Writer's mode: {writer_mode}")
 
 async def start(update: Update, context: CallbackContext):
     await update.message.reply_text('Send me a voice message, and I will transcribe it for you. Note I am not a QA bot, and will not answer your questions. I will only listen to you and transcribe your voice message, with paraphrasing from GPT-4. Type /help for more information.')
