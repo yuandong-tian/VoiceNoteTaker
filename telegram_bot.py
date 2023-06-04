@@ -69,6 +69,8 @@ async def toggle_writer(update: Update, context: CallbackContext):
     if user_full_name is None:
         return 
 
+    global writer_mode
+
     writer_mode = not writer_mode
     await update.message.reply_text(f"Writer's mode is set to be {writer_mode}")
 
@@ -133,6 +135,8 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
     print(f'[{user_full_name}] {transcribed_text}')
     await update.message.reply_text("Transcribed text:")
     await update.message.reply_text(transcribed_text)
+
+    global writer_mode
 
     if writer_mode:
         # output a json list with content and tag
