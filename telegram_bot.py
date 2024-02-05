@@ -7,6 +7,8 @@ import telegram.ext.filters as filters
 
 import core
 from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
+import requests
+from bs4 import BeautifulSoup
 
 OUTPUT_FORMAT = "mp3"
 
