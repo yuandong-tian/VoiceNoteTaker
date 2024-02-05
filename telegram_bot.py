@@ -97,6 +97,28 @@ async def check_auth(update: Update, context: CallbackContext):
 
     return user_full_name
 
+def get_arxiv_content(keywords):
+    url = f"https://export.arxiv.org/api/query?search_query=all:{'+'.join(keywords)}&start=0&max_results=10&sortBy=relevance&sortOrder=descending"
+    response = requests.get(url)
+
+    # use BeautifulSoup to parse the response
+    parser = BeautifulSoup(response.text, features="xml")
+
+    # extract title, summary and authors of the arXiv paper
+    entries = parser.find_all("entry")
+    all_papers = [] 
+    for entry in entries:
+        title = entry.title.text
+        summary = entry.summary.text
+        # For all authors, extract the name
+        authors = entry.find_all("author")
+        authors = [author.find("name").text for author in authors]
+
+        all_papers.append({"title": title, "summary": summary, "authors": authors})
+
+    # return them as a list of dictionaries
+    return all_papers
+
 async def handle_text_message(update: Update, context: CallbackContext):
     user_full_name = await check_auth(update, context)
     if user_full_name is None:
@@ -107,6 +129,13 @@ async def handle_text_message(update: Update, context: CallbackContext):
         reply = f"Receive arXiv: {text}"
         print(f'[{user_full_name}] {reply}')
         await update.message.reply_text(reply)
+    elif text.startswith("a:"):
+        reply = f"Get recent arXiv papers"
+        _, keywords = text.split(":", 1)
+        all_papers = get_arxiv_content(keywords.split())
+        for paper in all_papers:
+            # send the title, summary and authors of the paper as text form
+            await update.message.reply_text(f"Title: {paper['title']}\n Authors: {', '.join(paper['authors'])}\n Summary: {paper['summary']}\n ")
     else:
         await update.message.reply_text("I don't understand")
 
