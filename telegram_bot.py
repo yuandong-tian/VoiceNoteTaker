@@ -1,9 +1,11 @@
 import os
 import tempfile
 import json
-from telegram import Update, BotCommand
-from telegram.ext import CommandHandler, MessageHandler, CallbackContext, Application, PicklePersistence
+from telegram import Update, BotCommand, Bot
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, Application, PicklePersistence
 import telegram.ext.filters as filters
+from subprocess import check_output
+import re
 
 import core
 from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
@@ -22,9 +24,22 @@ writer_mode = False
 print(f"Writer's mode: {writer_mode}")
 
 async def start(update: Update, context: CallbackContext):
+    '''
+        Start the bot
+    '''
+    global commands
+    bot = Bot(telegram_api_token)
+    curr_commands = await bot.get_my_commands()
+    await update.message.reply_text(curr_commands)
+
+    await bot.set_my_commands([BotCommand(command=f.__name__, description=f.__doc__) for f in commands])
+
     await update.message.reply_text('Send me a voice message, and I will transcribe it for you. Note I am not a QA bot, and will not answer your questions. I will only listen to you and transcribe your voice message, with paraphrasing from GPT-4. Type /help for more information.')
 
 async def help(update: Update, context: CallbackContext):
+    '''
+        Get help message
+    '''
     await update.message.reply_text("""*YaGe Voice Note Taker Bot*
 
 *Usage*: Send me a voice message, and I will transcribe it for you\. Note I am not a QA bot, and will not answer your questions\. I will only listen to you and transcribe your voice message, with paraphrasing from GPT\-4\.
@@ -99,6 +114,7 @@ async def check_auth(update: Update, context: CallbackContext):
 
     return user_full_name
 
+file_matcher = re.compile(r"\[ffmpeg\] Correcting container in \"(.*?)\"") 
 def get_arxiv_content(keywords):
     url = f"https://export.arxiv.org/api/query?search_query=all:{'+'.join(keywords)}&start=0&max_results=10&sortBy=relevance&sortOrder=descending"
     response = requests.get(url)
@@ -131,6 +147,17 @@ async def handle_text_message(update: Update, context: CallbackContext):
         reply = f"Receive arXiv: {text}"
         print(f'[{user_full_name}] {reply}')
         await update.message.reply_text(reply)
+    elif text.startswith("https://www.youtube.com/watch?"):
+        # convert youtube to music and output
+        print(f"[{user_full_name}] {text}")
+        await update.message.reply_text(f"Converting youtube link to m4a file..")
+        output = check_output(f"python -m youtube_dl -f 140 \"{text}\"", shell=True).decode("utf-8")
+        for line in output.split("\n"):
+            m = file_matcher.match(line)
+            if m:
+                output_file = m.group(1).strip()
+
+        await update.message.reply_audio(open(output_file, "rb"))
     elif text.startswith("a:"):
         reply = f"Get recent arXiv papers"
         _, keywords = text.split(":", 1)
@@ -187,13 +214,11 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
         await update.message.reply_text(f"Paraphrased using {model.upper()}:")
         await update.message.reply_text(paraphrased_text)
 
+commands = [start, help, clear, data, toggle_writer]
+
 def main():
     persistence = PicklePersistence(filepath="gpt_archive.pickle")
     application = Application.builder().token(telegram_api_token).persistence(persistence).build()
-
-    commands = [start, help, clear, data, toggle_writer]
-
-    application.set_my_commands([BotCommand(command=f.__name__, description=f.__doc__) for f in commands])
 
     # on different commands - answer in Telegram
     [ application.add_handler(CommandHandler(f.__name__, f)) for f in commands ]
