@@ -137,7 +137,7 @@ async def handle_text_message(update: Update, context: CallbackContext):
         all_papers = get_arxiv_content(keywords.split())
         for paper in all_papers:
             # send the title, summary and authors of the paper as text form
-            await update.message.reply_text(f"Title: {paper['title']}\n Authors: {', '.join(paper['authors'])}\n Summary: {paper['summary']}\n ")
+            await update.message.reply_text(f"<b>Title:</b> {paper['title']}<br> <b>Authors:</b> {', '.join(paper['authors'])}<br><br> <b>Summary:</b> {paper['summary']}<br> ")
     else:
         await update.message.reply_text("I don't understand")
 
