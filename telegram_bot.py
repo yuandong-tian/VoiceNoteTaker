@@ -12,6 +12,8 @@ from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
 import requests
 from bs4 import BeautifulSoup
 
+from llm_summary import get_arxiv_summary
+
 OUTPUT_FORMAT = "mp3"
 
 telegram_api_token = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -147,6 +149,9 @@ async def handle_text_message(update: Update, context: CallbackContext):
         reply = f"Receive arXiv: {text}"
         print(f'[{user_full_name}] {reply}')
         await update.message.reply_text(reply)
+        summary = get_arxiv_summary(text) 
+        await update.message.reply_text(summary)
+        
     elif text.startswith("https://www.youtube.com/watch?"):
         # convert youtube to music and output
         print(f"[{user_full_name}] {text}")
