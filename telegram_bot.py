@@ -148,9 +148,9 @@ async def handle_text_message(update: Update, context: CallbackContext):
 
     text = update.message.text 
     if text.startswith("https://arxiv.org/"):
-        reply = f"Receive arXiv: {text}"
-        print(f'[{user_full_name}] {reply}')
-        await update.message.reply_text(reply)
+        # reply = f"Receive arXiv: {text}"
+        # print(f'[{user_full_name}] {reply}')
+        # await update.message.reply_text(reply)
         summary = get_arxiv_summary(text) 
         await update.message.reply_text(summary)
         
