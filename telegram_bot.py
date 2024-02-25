@@ -135,8 +135,9 @@ def get_arxiv_content(keywords):
         # For all authors, extract the name
         authors = entry.find_all("author")
         authors = [author.find("name").text for author in authors]
+        arxiv_id = paperlink.split("/")[-1]
 
-        all_papers.append({"title": title, "summary": summary, "authors": authors, "link": paperlink})
+        all_papers.append({"title": title, "summary": summary, "authors": authors, "link": paperlink, "arxiv_id": arxiv_id})
 
     # return them as a list of dictionaries
     return all_papers
@@ -174,7 +175,8 @@ async def handle_text_message(update: Update, context: CallbackContext):
             title = paper['title'].replace("\n"," ").replace("  ", " ") 
             summary = paper['summary'].replace("\n"," ").replace("  ", " ")
             link = paper["link"]
-            await update.message.reply_text(f"<b>Title:</b> <a href='{link}'>{title}</a>\n<b>Authors:</b> {', '.join(paper['authors'])}\n\n<b>Summary:</b> {summary}\n", parse_mode=ParseMode.HTML)
+            arxiv_id = paper["arxiv_id"]
+            await update.message.reply_text(f"<b>Title:</b> <a href='{link}'>{title}</a> ({arxiv_id}) \n<b>Authors:</b> {', '.join(paper['authors'])}\n\n<b>Summary:</b> {summary}\n", parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("I don't understand")
 
