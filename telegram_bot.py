@@ -2,6 +2,7 @@ import os
 import tempfile
 import json
 from telegram import Update, BotCommand, Bot
+from telegram.constants import ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, Application, PicklePersistence
 import telegram.ext.filters as filters
 from subprocess import check_output
@@ -128,13 +129,14 @@ def get_arxiv_content(keywords):
     entries = parser.find_all("entry")
     all_papers = [] 
     for entry in entries:
+        paperlink = entry.id.text
         title = entry.title.text
         summary = entry.summary.text
         # For all authors, extract the name
         authors = entry.find_all("author")
         authors = [author.find("name").text for author in authors]
 
-        all_papers.append({"title": title, "summary": summary, "authors": authors})
+        all_papers.append({"title": title, "summary": summary, "authors": authors, "link": paperlink})
 
     # return them as a list of dictionaries
     return all_papers
@@ -169,7 +171,10 @@ async def handle_text_message(update: Update, context: CallbackContext):
         all_papers = get_arxiv_content(keywords.split())
         for paper in all_papers:
             # send the title, summary and authors of the paper as text form
-            await update.message.reply_text(f"<b>Title:</b> {paper['title']}<br> <b>Authors:</b> {', '.join(paper['authors'])}<br><br> <b>Summary:</b> {paper['summary']}<br> ")
+            title = paper['title'].replace("\n"," ").replace("  ", " ") 
+            summary = paper['summary'].replace("\n"," ").replace("  ", " ")
+            link = paper["link"]
+            await update.message.reply_text(f"<b>Title:</b> <a href='{link}'>{title}</a>\n<b>Authors:</b> {', '.join(paper['authors'])}\n\n<b>Summary:</b> {summary}\n", parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("I don't understand")
 
