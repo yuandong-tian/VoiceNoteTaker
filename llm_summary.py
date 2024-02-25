@@ -102,3 +102,8 @@ def get_arxiv_summary(arxiv_link):
 
     response = model.generate_content(prompt.format(title=title, abstract=abstract, introduction=introduction))
     return response.text
+
+if __name__ == "__main__":
+    arxiv_link = 'https://arxiv.org/abs/2104.13922'
+    summary = get_arxiv_summary(arxiv_link)
+    print(summary)
