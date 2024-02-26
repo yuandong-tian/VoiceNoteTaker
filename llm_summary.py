@@ -124,8 +124,6 @@ def get_arxiv_summary(arxiv_link):
     1. First, list 1-2 bullet points to summarize the abstract and introduction. Do not simply copy from the abstract and/or introduction. 
     2. Second, list 1 bullet point for methodology innovation. Please be concise and emphasize the contribution of the paper, i.e., how it is different from existing research works. 
     3. Finally, list 1-2 bullet points to summarize its experimental results. If you cannot find any experimental results, just say "no experiments".  
-
-    Please make the output into html format with html tags. E.g., instead of output **aa**, output <b>aa</b>
     '''
 
     input_data = '''

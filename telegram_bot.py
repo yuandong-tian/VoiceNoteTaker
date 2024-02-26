@@ -153,7 +153,7 @@ async def handle_text_message(update: Update, context: CallbackContext):
         # print(f'[{user_full_name}] {reply}')
         # await update.message.reply_text(reply)
         summary = get_arxiv_summary(text) 
-        await update.message.reply_text(summary, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(summary)
         
     elif text.startswith("https://www.youtube.com/watch?"):
         # convert youtube to music and output
