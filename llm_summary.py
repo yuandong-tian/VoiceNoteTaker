@@ -106,11 +106,26 @@ def get_arxiv_summary(arxiv_link):
     except:
         introduction = ""
 
+    # Then extract each section / subsection to get an idea on what's going on in details. 
+
+    sections = []
+
+    for m in re.finditer(r'\\section{(.*?)}(.*?)\\section{', paper, re.DOTALL):
+        sec_title = m.group(1)
+        sec_content = m.group(2)
+
+        if sec_title == "Introduction":
+            continue
+        sections.append(dict(title=sec_title, content=sec_content))
+
     prompt = '''
-    Generate a natural language summary of the following paper. 
-    Please list 3-5 bullet points. Do not simply copy from the abstract and/or introduction. 
-    Please be concise and emphasize the contribution of the paper, i.e., how it is different from existing research works. 
-    Please remove all latex control symbols. E.g., "\\abc{xyz}" should be replaced with "xyz" in the response.
+    Generate a natural language summary of the following paper, given the title, abstract, introduction and start/end part of each sections. 
+
+    1. First, list 1-2 bullet points to summarize the abstract and introduction. Do not simply copy from the abstract and/or introduction. 
+    2. Second, list 1 bullet point for methodology innovation. Please be concise and emphasize the contribution of the paper, i.e., how it is different from existing research works. 
+    3. Finally, list 1-2 bullet points to summarize its experimental results. If you cannot find any experimental results, just say "no experiments".  
+
+    Please make the output into html format with html tags. E.g., instead of output **aa**, output <b>aa</b>
     '''
 
     input_data = '''
@@ -118,9 +133,24 @@ def get_arxiv_summary(arxiv_link):
     Title: {title}
     Abstract: {abstract}
     Introduction: {introduction}
+    Sections: {sections}
     '''
 
-    response = model.generate_content(prompt + input_data.format(title=title, abstract=abstract, introduction=introduction))
+    section_str = ""
+    for sec in sections:
+        section_str += "Section title: " + sec['title'] + "\n"
+        section_str += "Section content: "
+
+        content = sec["content"]
+        if len(content) < 3000:
+            section_str += content
+        else:
+            section_str += content[:1500] + "\n\n [Content omitted]\n\n" + content[-1500:]
+
+        section_str += "\n" 
+
+    response = model.generate_content(
+        prompt + input_data.format(title=title, abstract=abstract, introduction=introduction, sections=section_str))
     ret = response.text
 
     if title == "":
