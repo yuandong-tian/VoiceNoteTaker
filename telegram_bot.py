@@ -13,7 +13,7 @@ from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
 import requests
 from bs4 import BeautifulSoup
 
-from llm_summary import get_arxiv_summary
+from llm_summary import get_arxiv_summary, summarize_keywords
 
 OUTPUT_FORMAT = "mp3"
 
@@ -118,7 +118,7 @@ async def check_auth(update: Update, context: CallbackContext):
     return user_full_name
 
 file_matcher = re.compile(r"\[ffmpeg\] Correcting container in \"(.*?)\"") 
-def get_arxiv_content(keywords):
+def search_arxiv(keywords):
     url = f"https://export.arxiv.org/api/query?search_query=all:{'+'.join(keywords)}&start=0&max_results=10&sortBy=relevance&sortOrder=descending"
     response = requests.get(url)
 
@@ -137,10 +137,35 @@ def get_arxiv_content(keywords):
         authors = [author.find("name").text for author in authors]
         arxiv_id = paperlink.split("/")[-1]
 
-        all_papers.append({"title": title, "summary": summary, "authors": authors, "link": paperlink, "arxiv_id": arxiv_id})
+        title = title.replace("\n"," ").replace("  ", " ") 
+        summary = summary.replace("\n"," ").replace("  ", " ")
+
+        all_papers.append({"title": title, "abstract": summary, "authors": authors, "link": paperlink, "arxiv_id": arxiv_id})
 
     # return them as a list of dictionaries
     return all_papers
+
+def paper2message(all_papers):
+    all_messages = []
+    for paper in all_papers:
+        # send the title, summary and authors of the paper as text form
+        title = paper['title']
+        abstract = paper['abstract']
+        link = paper["link"]
+        arxiv_id = paper["arxiv_id"]
+
+        msg = f"<b>Title:</b> <a href='{link}'>{title}</a> ({arxiv_id}) \n<b>Authors:</b> {', '.join(paper['authors'])}\n\n<b>Abstract:</b> {abstract}\n"
+        if "summary" in paper:
+            msg += f"\n<b>Summary:</b> {paper['summary']}" 
+        all_messages.append(msg)
+
+    return all_messages
+
+async def send_papers(update: Update, all_papers): 
+    texts = paper2message(all_papers)
+    for text in texts:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
 
 async def handle_text_message(update: Update, context: CallbackContext):
     user_full_name = await check_auth(update, context)
@@ -152,8 +177,14 @@ async def handle_text_message(update: Update, context: CallbackContext):
         # reply = f"Receive arXiv: {text}"
         # print(f'[{user_full_name}] {reply}')
         # await update.message.reply_text(reply)
-        summary = get_arxiv_summary(text) 
-        await update.message.reply_text(summary)
+        arxiv_id = text.split('/')[-1]
+        if arxiv_id.endswith("pdf"):
+            # Getting rid of pdf suffix.
+            arxiv_id = arxiv_id[:-4]
+
+        arxiv_info = search_arxiv([arxiv_id])
+        arxiv_info[0]["summary"] = get_arxiv_summary(arxiv_info[0]) 
+        await send_papers(update, arxiv_info)
         
     elif text.startswith("https://www.youtube.com/watch?"):
         # convert youtube to music and output
@@ -169,14 +200,27 @@ async def handle_text_message(update: Update, context: CallbackContext):
     elif text.startswith("a:"):
         reply = f"Get recent arXiv papers"
         _, keywords = text.split(":", 1)
-        all_papers = get_arxiv_content(keywords.split())
-        for paper in all_papers:
-            # send the title, summary and authors of the paper as text form
-            title = paper['title'].replace("\n"," ").replace("  ", " ") 
-            summary = paper['summary'].replace("\n"," ").replace("  ", " ")
-            link = paper["link"]
-            arxiv_id = paper["arxiv_id"]
-            await update.message.reply_text(f"<b>Title:</b> <a href='{link}'>{title}</a> ({arxiv_id}) \n<b>Authors:</b> {', '.join(paper['authors'])}\n\n<b>Summary:</b> {summary}\n", parse_mode=ParseMode.HTML)
+        arxiv_infos = search_arxiv(keywords.split())
+        await send_papers(update, arxiv_info)
+    elif text.startswith(":bs"):
+        # Start the brainstorming process
+        # Backward trace the messages that the current messages are replying to. 
+        previous_message = update.message.reply_to_message
+        backward_chain = []
+        while previous_message:
+            backward_chain.append(previous_message["text"])
+            previous_message = previous_message.reply_to_message
+
+        # Then send the messages to LLM API to start the brainstorming process.
+        backward_chain = backward_chain[::-1]
+        keywords = summarize_keywords(backward_chain)
+        arxiv_infos = search_arxiv(keywords)
+        reference_idea=" ".join(backward_chain)
+        for arxiv_info in arxiv_infos:
+            # Extract their summary
+            arxiv_info["summary"] = get_arxiv_summary(arxiv_info, reference_idea=reference_idea)
+
+        await send_papers(update, arxiv_infos)
     else:
         await update.message.reply_text("I don't understand")
 

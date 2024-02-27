@@ -1,7 +1,9 @@
+import json
 import pathlib
 import tarfile
 import textwrap
 import os
+from typing import List
 
 import requests
 import google.generativeai as genai
@@ -67,36 +69,19 @@ genai.configure(api_key=os.environ.get('GEMINI_API_KEY'))
 
 model = genai.GenerativeModel('gemini-pro') 
 
-def get_arxiv_summary(arxiv_link):
+def get_arxiv_summary(arxiv_info, reference_idea=None):
     # Load arXiv papers and generate a summary.
     # Download a paper from arXiv, extract its text, and generate a summary using the model.
     # Download the paper.
     # arxiv_link = 'https://arxiv.org/abs/2104.13922'
     # arxiv_link = "https://arxiv.org/abs/2309.17453"
-    arxiv_id = arxiv_link.split('/')[-1]
-    if arxiv_id.endswith("pdf"):
-        # Getting rid of pdf suffix.
-        arxiv_id = arxiv_id[:-4]
-    paper = download_arxiv_latex(arxiv_id)
+    paper = download_arxiv_latex(arxiv_info["arxiv_id"])
+    
+    # Placeholder for introduction retrieval
     paper += r"\section{dummy}"
 
-    # Extract the abstract and introduction from paper.
-    # The title is within \XXXtitle{...}, where XXX can be any string, e.g., \icmltitle{...}, etc
-    # Using regular expression to extract the content.
-    try:
-        title = re.search(r'\\(.*?)title{(.*?)}', paper).group(2).replace('\\\\', '')
-    except:
-        title = ""
-    
-    # The abstract starts with \begin{abstract} and ends with \end{abstract} and may span multiple lines 
-    # Using regular expression to extract the content.
-    try:
-        abstract = re.search(r'\\begin{abstract}(.*?)\\end{abstract}', paper, re.DOTALL).group(1)
-    except:
-        try:
-            abstract = re.search(r'\\abstract{(.*?)}', paper, re.DOTALL).group(1)
-        except:
-            abstract = ""
+    title = arxiv_info["title"] 
+    abstract = arxiv_info["abstract"]
 
     # The introduction starts with \section{Introduction} and ends when another section starts with \section{...} 
     # It may span multiple lines.
@@ -125,6 +110,9 @@ def get_arxiv_summary(arxiv_link):
     2. Second, list 1 bullet point for methodology innovation. Please be concise and emphasize the contribution of the paper, i.e., how it is different from existing research works. 
     3. Finally, list 1-2 bullet points to summarize its experimental results. If you cannot find any experimental results, just say "no experiments".  
     '''
+
+    if reference_idea is not None:
+        prompt += "4. Also compare the paper with a reference idea and summarize how the reference idea is different from the paper. Reference idea: " + reference_idea
 
     input_data = '''
 
@@ -160,7 +148,25 @@ def get_arxiv_summary(arxiv_link):
 
     return ret 
 
+def summarize_keywords(comments : List[str]):
+    # Given comments, call the model to summarize the comments into a few keywords for arXiv search.
+    prompt = '''
+    Generate a few keywords to summarize the following comments. Please return the keywords in json format (e.g., ["keyword1", "keyword2", "keyword3"]). 
+    
+    Comments: 
+    {comments} 
+    ''' 
+
+    while True:
+        response = model.generate_content(prompt.format(comments="\n".join(comments)))
+        try:
+            return json.loads(response.text)
+        except:
+            print("Error in summarizing keywords. Retrying..")
+            pass 
+
+
 if __name__ == "__main__":
-    arxiv_link = 'https://arxiv.org/abs/2309.17453'
+    arxiv_link = '2309.17453'
     summary = get_arxiv_summary(arxiv_link)
     print(summary)
