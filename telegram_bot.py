@@ -198,11 +198,10 @@ async def handle_text_message(update: Update, context: CallbackContext):
 
         await update.message.reply_audio(open(output_file, "rb"))
     elif text.startswith("a:"):
-        reply = f"Get recent arXiv papers"
         _, keywords = text.split(":", 1)
         arxiv_infos = search_arxiv(keywords.split())
         await send_papers(update, arxiv_info)
-    elif text.startswith(":bs"):
+    elif text == "bs":
         # Start the brainstorming process
         # Backward trace the messages that the current messages are replying to. 
         previous_message = update.message.reply_to_message
@@ -215,7 +214,9 @@ async def handle_text_message(update: Update, context: CallbackContext):
         backward_chain = backward_chain[::-1]
         keywords = summarize_keywords(backward_chain)
         arxiv_infos = search_arxiv(keywords)
-        reference_idea=" ".join(backward_chain)
+        await update.message.reply_text(f"Keywords: {keywords}. Find {len(arxiv_infos)} papers")
+
+        reference_idea = " ".join(backward_chain)
         for arxiv_info in arxiv_infos:
             # Extract their summary
             arxiv_info["summary"] = get_arxiv_summary(arxiv_info, reference_idea=reference_idea)

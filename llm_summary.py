@@ -112,7 +112,7 @@ def get_arxiv_summary(arxiv_info, reference_idea=None):
     '''
 
     if reference_idea is not None:
-        prompt += "4. Also compare the paper with a reference idea and summarize how the reference idea is different from the paper. Reference idea: " + reference_idea
+        prompt += "4. Also compare the paper with a reference idea and summarize how the reference idea is different from the paper. Reference idea: " + reference_idea + "\n"
 
     input_data = '''
 
@@ -135,35 +135,44 @@ def get_arxiv_summary(arxiv_info, reference_idea=None):
 
         section_str += "\n" 
 
-    response = model.generate_content(
-        prompt + input_data.format(title=title, abstract=abstract, introduction=introduction, sections=section_str))
-    ret = response.text
+    for i in range(2):
+        try:
+            response = model.generate_content(
+                prompt + input_data.format(title=title, abstract=abstract, introduction=introduction, sections=section_str))
+            ret = response.text
 
-    if title == "":
-        ret = "[No title]" + ret
-    if abstract == "":
-        ret = "[No abstract]" + ret
-    if introduction == "":
-        ret = "[No introduction]" + ret
+            if title == "":
+                ret = "[No title]" + ret
+            if abstract == "":
+                ret = "[No abstract]" + ret
+            if introduction == "":
+                ret = "[No introduction]" + ret
 
-    return ret 
+            return ret 
+        except:
+            pass
+
+    return "Error"
 
 def summarize_keywords(comments : List[str]):
     # Given comments, call the model to summarize the comments into a few keywords for arXiv search.
     prompt = '''
-    Generate a few keywords to summarize the following comments. Please return the keywords in json format (e.g., ["keyword1", "keyword2", "keyword3"]). 
+    Generate a few keywords to summarize the following comments. Please return the keywords in json format (e.g., ["keyword1", "keyword2", "keyword3"]).  
     
     Comments: 
     {comments} 
     ''' 
 
-    while True:
+    for i in range(3):
         response = model.generate_content(prompt.format(comments="\n".join(comments)))
         try:
-            return json.loads(response.text)
+            items = response.text.split("\n")
+            return json.loads("\n".join(items[1:-1]))
         except:
             print("Error in summarizing keywords. Retrying..")
             pass 
+
+    return "Summary error!"
 
 
 if __name__ == "__main__":
