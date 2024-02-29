@@ -55,7 +55,7 @@ def get_sentiment(query):
             input_data.append((s, recency))
 
     # sort the input data by recency
-    input_data = input_data.sort(key=lambda x: x[1])
+    input_data.sort(key=lambda x: x[1])
     # remove the recency
     input_data = [x[0] for x in input_data]
     # Only use the first 10 posts
