@@ -14,6 +14,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from llm_summary import get_arxiv_summary, summarize_keywords
+from get_stock_info import get_sentiment
 
 OUTPUT_FORMAT = "mp3"
 
@@ -221,6 +222,12 @@ async def handle_text_message(update: Update, context: CallbackContext):
             arxiv_info["summary"] = get_arxiv_summary(arxiv_info, reference_idea=reference_idea)
 
         await send_papers(update, arxiv_infos)
+    elif text.startswith("search"):
+        # search twitter
+        item = text.split(" ", 1)[1].strip()
+        overall_sentiment, overall_output = get_sentiment(item)
+        overall_output = overall_output.replace("[", "<b>").replace("]", "</b>")
+        await update.message.reply_text(overall_output, parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("I don't understand")
 
