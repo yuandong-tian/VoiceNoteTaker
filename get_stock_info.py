@@ -45,13 +45,21 @@ def get_sentiment(query):
         # Note that +0000 means it is UTC time, and we need to convert it to the local time
         created_at = entry['created_at']
         # get utc time now 
-        recency = (datetime.now() - datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y")).days
+        recency = datetime.now() - datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y")
         # convert to local time
-        if recency < 2:
+        if recency.days < 2:
             # remove the new line character
             text = entry["text"].replace("\n", " ")
             views = entry["views"]
-            input_data.append(f"[{created_at}] {text} [{views}]")
+            s = f"[{created_at}] {text} [{views}]" 
+            input_data.append((s, recency))
+
+    # sort the input data by recency
+    input_data = input_data.sort(key=lambda x: x[1])
+    # remove the recency
+    input_data = [x[0] for x in input_data]
+    # Only use the first 10 posts
+    input_data = input_data[:10]
 
     prompt = '''
         Summarize the following posts regarding to the stock {stock}. Each row is a post with the following format:
