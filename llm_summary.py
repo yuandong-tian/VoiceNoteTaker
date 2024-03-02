@@ -49,7 +49,7 @@ class ModelInterface:
     def get_summary(self, paper : ArXiv, reference_idea=None):
         # Summarization of each section. 
         prompt = '''
-        Generate a summary of the following section. The summary should be 2-3 sentences, be concise and informative. 
+        Generate a summary of the following section. The summary should be 1-2 sentences, be concise and informative. 
         '''
         if reference_idea is not None:
             prompt += "Also compare the paper with a reference idea. Summarize how the reference idea is different from the paragraph, if the reference idea is relevant. Reference idea: " + reference_idea + "\n"
