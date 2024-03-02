@@ -194,7 +194,8 @@ async def handle_text_message(update: Update, context: CallbackContext):
     elif text.startswith("https://www.youtube.com/watch?"):
         # convert youtube to music and output
         print(f"[{user_full_name}] {text}")
-        await update.message.reply_text(f"Converting youtube link to m4a file..")
+        message = await update.message.reply_text(f"Converting youtube link to m4a file..", reply_to_message_id=msg_id)
+        msg_id = message.message_id
         output = check_output(f"python -m youtube_dl -f 140 \"{text}\"", shell=True).decode("utf-8")
         for line in output.split("\n"):
             m = file_matcher.match(line)
