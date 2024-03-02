@@ -128,16 +128,16 @@ def get_arxiv_summary(arxiv_info, reference_idea=None):
     # Placeholder for introduction retrieval
     paper += r"\section{dummy}"
 
-    title = arxiv_info["title"] 
-    abstract = arxiv_info["abstract"]
+    # title = arxiv_info["title"] 
+    # abstract = arxiv_info["abstract"]
 
-    # The introduction starts with \section{Introduction} and ends when another section starts with \section{...} 
-    # It may span multiple lines.
-    # Using regular expression to extract the content.
-    try:
-        introduction = re.search(r'\\section{Introduction}(.*?)\\section{', paper, re.DOTALL).group(1)
-    except:
-        introduction = ""
+    # # The introduction starts with \section{Introduction} and ends when another section starts with \section{...} 
+    # # It may span multiple lines.
+    # # Using regular expression to extract the content.
+    # try:
+    #     introduction = re.search(r'\\section{Introduction}(.*?)\\section{', paper, re.DOTALL).group(1)
+    # except:
+    #     introduction = ""
 
     # Then extract each section / subsection to get an idea on what's going on in details. 
 
@@ -153,22 +153,20 @@ def get_arxiv_summary(arxiv_info, reference_idea=None):
 
     # Summarization of each section. 
     prompt = '''
-    Generate a summary of the following section. The summary should be 2-3 sentences, be concise and informative. The title and abstract are also provided as a context for your reference. 
+    Generate a summary of the following section. The summary should be 2-3 sentences, be concise and informative. 
     '''
     if reference_idea is not None:
         prompt += "Also compare the paper with a reference idea. Summarize how the reference idea is different from the paragraph, if the reference idea is relevant. Reference idea: " + reference_idea + "\n"
 
     input_data = '''
 
-    Title: {title}
-    Abstract: {abstract}
-    The section title: {section_title}
-    The section content: {content}
+    Title: {section_title}
+    Content: {content}
     '''
 
     results = []
     for sec in sections:
-        input_all = prompt + input_data.format(title=title, abstract=abstract, section_title=sec["title"], content=sec["content"])
+        input_all = prompt + input_data.format(section_title=sec["title"], content=sec["content"])
         # print(input_all)
         output = call_model(input_all)
         results.append("<b>" + sec["title"] + "</b>\n" + output)
