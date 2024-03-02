@@ -162,9 +162,12 @@ def paper2message(all_papers):
                 for msg in paper["summary"]:
                     yield msg
 
-async def send_papers(update: Update, all_papers): 
+async def send_papers(update: Update, all_papers, reply_to_message_id=None):
     for msg in paper2message(all_papers):
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        # reply to the previous message
+        # get message id of the previous message
+        message = await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
+        reply_to_message_id = message.message_id
 
 
 async def handle_text_message(update: Update, context: CallbackContext):
@@ -173,6 +176,8 @@ async def handle_text_message(update: Update, context: CallbackContext):
         return 
 
     text = update.message.text 
+    msg_id = update.message.message_id
+
     if text.startswith("https://arxiv.org/"):
         # reply = f"Receive arXiv: {text}"
         # print(f'[{user_full_name}] {reply}')
@@ -184,7 +189,7 @@ async def handle_text_message(update: Update, context: CallbackContext):
 
         arxiv_info = search_arxiv([arxiv_id])
         arxiv_info[0]["summary"] = get_arxiv_summary(arxiv_info[0]) 
-        await send_papers(update, arxiv_info)
+        await send_papers(update, arxiv_info, reply_to_message_id=msg_id)
         
     elif text.startswith("https://www.youtube.com/watch?"):
         # convert youtube to music and output
@@ -196,7 +201,8 @@ async def handle_text_message(update: Update, context: CallbackContext):
             if m:
                 output_file = m.group(1).strip()
 
-        await update.message.reply_audio(open(output_file, "rb"))
+        await update.message.reply_audio(open(output_file, "rb"), reply_to_message_id=msg_id)
+
     elif text.startswith("a:"):
         _, keywords = text.split(":", 1)
         arxiv_infos = search_arxiv(keywords.split())
@@ -214,22 +220,23 @@ async def handle_text_message(update: Update, context: CallbackContext):
         backward_chain = backward_chain[::-1]
         keywords = summarize_keywords(backward_chain)
         arxiv_infos = search_arxiv(keywords)
-        await update.message.reply_text(f"Keywords: {keywords}. Find {len(arxiv_infos)} papers")
+        message = await update.message.reply_text(f"Keywords: {keywords}. Find {len(arxiv_infos)} papers", reply_to_message_id=msg_id)
+        msg_id = message.message_id
 
         reference_idea = " ".join(backward_chain)
         for arxiv_info in arxiv_infos:
             # Extract their summary
             arxiv_info["summary"] = get_arxiv_summary(arxiv_info, reference_idea=reference_idea)
-            await send_papers(update, [arxiv_info])
+            await send_papers(update, [arxiv_info], reply_to_message_id=msg_id)
 
     elif text.startswith("search"):
         # search twitter
         item = text.split(" ", 1)[1].strip()
         overall_sentiment, overall_output = get_sentiment(item)
         overall_output = overall_output.replace("[", "<b>").replace("]", "</b>")
-        await update.message.reply_text(overall_output, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(overall_output, parse_mode=ParseMode.HTML, reply_to_message_id=msg_id)
     else:
-        await update.message.reply_text("I don't understand")
+        await update.message.reply_text("I don't understand", reply_to_message_id=msg_id)
 
 async def warn_if_not_voice_message(update: Update, context: CallbackContext):
     if not update.message.voice:
