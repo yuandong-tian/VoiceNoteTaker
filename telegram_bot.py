@@ -147,7 +147,6 @@ def search_arxiv(keywords):
     return all_papers
 
 def paper2message(all_papers):
-    all_messages = []
     for paper in all_papers:
         # send the title, summary and authors of the paper as text form
         title = paper['title']
@@ -155,17 +154,17 @@ def paper2message(all_papers):
         link = paper["link"]
         arxiv_id = paper["arxiv_id"]
 
-        msg = f"<b>Title:</b> <a href='{link}'>{title}</a> ({arxiv_id}) \n<b>Authors:</b> {', '.join(paper['authors'])}\n\n<b>Abstract:</b> {abstract}\n"
+        yield f"<b>Title:</b> <a href='{link}'>{title}</a> ({arxiv_id}) \n<b>Authors:</b> {', '.join(paper['authors'])}\n\n<b>Abstract:</b> {abstract}\n"
         if "summary" in paper:
-            msg += f"\n<b>Summary:</b> {paper['summary']}" 
-        all_messages.append(msg)
-
-    return all_messages
+            if isinstance(paper["summary"], str):
+               yield f"<b>Summary:</b> {paper['summary']}" 
+            else:
+                for msg in paper["summary"]:
+                    yield msg
 
 async def send_papers(update: Update, all_papers): 
-    texts = paper2message(all_papers)
-    for text in texts:
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    for msg in paper2message(all_papers):
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 
 async def handle_text_message(update: Update, context: CallbackContext):
@@ -221,8 +220,8 @@ async def handle_text_message(update: Update, context: CallbackContext):
         for arxiv_info in arxiv_infos:
             # Extract their summary
             arxiv_info["summary"] = get_arxiv_summary(arxiv_info, reference_idea=reference_idea)
+            await send_papers(update, [arxiv_info])
 
-        await send_papers(update, arxiv_infos)
     elif text.startswith("search"):
         # search twitter
         item = text.split(" ", 1)[1].strip()

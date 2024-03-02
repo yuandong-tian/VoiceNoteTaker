@@ -153,7 +153,7 @@ def get_arxiv_summary(arxiv_info, reference_idea=None):
 
     # Summarization of each section. 
     prompt = '''
-    Generate a summary of the following section. The summary should be 3-5 sentences, be concise and informative. The title and abstract are also provided as a context for your reference. 
+    Generate a summary of the following section. The summary should be 2-3 sentences, be concise and informative. The title and abstract are also provided as a context for your reference. 
     '''
     if reference_idea is not None:
         prompt += "Also compare the paper with a reference idea. Summarize how the reference idea is different from the paragraph, if the reference idea is relevant. Reference idea: " + reference_idea + "\n"
@@ -166,13 +166,13 @@ def get_arxiv_summary(arxiv_info, reference_idea=None):
     The section content: {content}
     '''
 
-    result = ""
+    results = []
     for sec in sections:
         input_all = prompt + input_data.format(title=title, abstract=abstract, section_title=sec["title"], content=sec["content"])
         # print(input_all)
         output = call_model(input_all)
-        result += "<b>" + sec["title"] + "</b>\n" + output + "\n"
-    return result
+        results.append("<b>" + sec["title"] + "</b>\n" + output)
+    return results
 
 
 def summarize_keywords(comments : List[str]):
