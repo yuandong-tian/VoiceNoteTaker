@@ -9,76 +9,7 @@ import requests
 import google.generativeai as genai
 import re
 
-def untar(fname, dirs):
-    """
-    解压tar.gz文件
-    :param fname: 压缩文件名
-    :param dirs: 解压后的存放路径
-    :return: bool
-    """
-
-    try:
-        t = tarfile.open(fname)
-        t.extractall(path = dirs)
-        return True
-    except Exception as e:
-        print(e)
-        return False
-
-def download_arxiv_latex(arxiv_id):
-    # E.g., arxiv id = '2104.13922'
-    output_path = f"./{arxiv_id}"
-
-    if not os.path.exists(output_path):
-        source_link = "https://arxiv.org/e-print/" + arxiv_id
-        response = requests.get(source_link)
-        filename = arxiv_id + ".tar.gz"
-        with open(filename, "wb") as f:
-            f.write(response.content)
-
-        untar(filename, output_path)
-        # delete all non .tex files in all the root folders and subfolders to save space
-        # and put all tex files into a long text
-        # Traverse recursively  
-        for root, dirs, files in os.walk(output_path):
-            for file in files:
-                if not file.endswith(".tex"):
-                    os.remove(os.path.join(root, file))
-                    
-        # also remove the tar.gz file
-        os.remove(filename)
-    
-    # Traverse recursively to put all tex files into a long text
-    all_content = ""
-    for root, dirs, files in os.walk(output_path):
-        for file in files:
-            if file.endswith(".tex"):
-                # put them into a long text
-                with open(os.path.join(root, file), "r") as f:
-                    content = f.read()
-                    # all_content += "==== File: " + file + " ====\n" + content
-                    all_content += content
-
-    return all_content
-
-genai.configure(api_key=os.environ.get('GEMINI_API_KEY'))
-
-# for m in genai.list_models():
-#     if 'generateContent' in m.supported_generation_methods:
-#         print(m.name)
-
-model = genai.GenerativeModel('gemini-pro') 
-
-def call_model(prompt):
-    for i in range(3):
-        try:
-            response = model.generate_content(prompt)
-            ret = response.text
-            return ret
-        except:
-            pass
-
-    return "Error"
+from arxiv_utils import ArXiv
 
 def shorten_section(title, content, max_length=3000):
     section_str = "Section title: " + title + "\n"
@@ -91,6 +22,68 @@ def shorten_section(title, content, max_length=3000):
 
     section_str += "\n" 
     return section_str
+
+class ModelInterface:
+    def __init__(self):
+        genai.configure(api_key=os.environ.get('GEMINI_API_KEY'))
+
+        # for m in genai.list_models():
+        #     if 'generateContent' in m.supported_generation_methods:
+        #         print(m.name)
+
+        self.model = genai.GenerativeModel('gemini-pro') 
+
+    def call_model(self, prompt, post_process=None, max_retry=3):
+        for i in range(max_retry):
+            try:
+                response = self.model.generate_content(prompt)
+                ret = response.text
+                if post_process is not None:
+                    ret = post_process(ret)
+                return ret
+            except:
+                pass
+
+        return "Error"
+
+    def get_summary(self, paper : ArXiv, reference_idea=None):
+        # Summarization of each section. 
+        prompt = '''
+        Generate a summary of the following section. The summary should be 2-3 sentences, be concise and informative. 
+        '''
+        if reference_idea is not None:
+            prompt += "Also compare the paper with a reference idea. Summarize how the reference idea is different from the paragraph, if the reference idea is relevant. Reference idea: " + reference_idea + "\n"
+
+        input_data = '''
+
+        Title: {section_title}
+        Content: {content}
+        '''
+
+        sections = paper.sections
+
+        results = []
+        for sec_title, content in sections.items():
+            input_all = prompt + input_data.format(section_title=sec_title, content=content)
+            # print(input_all)
+            output = self.call_model(input_all)
+            results.append("<b>" + sec_title + "</b>\n" + output)
+        return results
+
+    def summarize_keywords(self, comments : List[str]):
+        # Given comments, call the model to summarize the comments into a few keywords for arXiv search.
+        prompt = '''
+        Generate a few keywords to summarize the following comments. Please return the keywords in json format (e.g., ["keyword1", "keyword2", "keyword3"]).  
+        
+        Comments: 
+        {comments} 
+        ''' 
+        def post_process(ret):
+            return json.loads("\n".join(ret.split("\n")[1:-1]))
+
+        final_input = prompt.format(comments="\n".join(comments))
+        
+        return self.call_model(final_input, post_process=post_process)
 
 """
 prompt_summarize_paper = '''
@@ -117,84 +110,14 @@ for sec in sections:
 
 """
 
-def get_arxiv_summary(arxiv_info, reference_idea=None):
-    # Load arXiv papers and generate a summary.
-    # Download a paper from arXiv, extract its text, and generate a summary using the model.
-    # Download the paper.
-    # arxiv_link = 'https://arxiv.org/abs/2104.13922'
-    # arxiv_link = "https://arxiv.org/abs/2309.17453"
-    paper = download_arxiv_latex(arxiv_info["arxiv_id"])
-    
-    # Placeholder for introduction retrieval
-    paper += r"\section{dummy}"
-
-    # title = arxiv_info["title"] 
-    # abstract = arxiv_info["abstract"]
-
-    # # The introduction starts with \section{Introduction} and ends when another section starts with \section{...} 
-    # # It may span multiple lines.
-    # # Using regular expression to extract the content.
-    # try:
-    #     introduction = re.search(r'\\section{Introduction}(.*?)\\section{', paper, re.DOTALL).group(1)
-    # except:
-    #     introduction = ""
-
-    # Then extract each section / subsection to get an idea on what's going on in details. 
-
-    sections = []
-
-    for m in re.finditer(r'\\section{(.*?)}(.*?)\\section{', paper, re.DOTALL):
-        sec_title = m.group(1)
-        sec_content = m.group(2)
-
-        # if sec_title == "Introduction":
-        #     continue
-        sections.append(dict(title=sec_title, content=sec_content))
-
-    # Summarization of each section. 
-    prompt = '''
-    Generate a summary of the following section. The summary should be 2-3 sentences, be concise and informative. 
-    '''
-    if reference_idea is not None:
-        prompt += "Also compare the paper with a reference idea. Summarize how the reference idea is different from the paragraph, if the reference idea is relevant. Reference idea: " + reference_idea + "\n"
-
-    input_data = '''
-
-    Title: {section_title}
-    Content: {content}
-    '''
-
-    results = []
-    for sec in sections:
-        input_all = prompt + input_data.format(section_title=sec["title"], content=sec["content"])
-        # print(input_all)
-        output = call_model(input_all)
-        results.append("<b>" + sec["title"] + "</b>\n" + output)
-    return results
-
-
-def summarize_keywords(comments : List[str]):
-    # Given comments, call the model to summarize the comments into a few keywords for arXiv search.
-    prompt = '''
-    Generate a few keywords to summarize the following comments. Please return the keywords in json format (e.g., ["keyword1", "keyword2", "keyword3"]).  
-    
-    Comments: 
-    {comments} 
-    ''' 
-
-    for i in range(3):
-        response = model.generate_content(prompt.format(comments="\n".join(comments)))
-        try:
-            items = response.text.split("\n")
-            return json.loads("\n".join(items[1:-1]))
-        except:
-            print("Error in summarizing keywords. Retrying..")
-            pass 
-
-    return "Summary error!"
-
-
 if __name__ == "__main__":
-    arxiv_link = '2309.17453'
-    summary = get_arxiv_summary(arxiv_link)
+    arxiv_link = 'https://arxiv.org/pdf/2402.18510.pdf'
+    paper = ArXiv(arxiv_link)
+    paper.download_latex()
+
+    import pdb
+    pdb.set_trace()
+
+    model = ModelInterface()
+    summary = model.get_summary(paper)
     print(summary)

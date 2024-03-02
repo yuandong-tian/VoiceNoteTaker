@@ -13,7 +13,7 @@ from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
 import requests
 from bs4 import BeautifulSoup
 
-from llm_summary import get_arxiv_summary, summarize_keywords
+from llm_summary import get_arxiv_summary, summarize_keywords, get_arxiv_id
 from get_stock_info import get_sentiment
 
 OUTPUT_FORMAT = "mp3"
@@ -182,11 +182,7 @@ async def handle_text_message(update: Update, context: CallbackContext):
         # reply = f"Receive arXiv: {text}"
         # print(f'[{user_full_name}] {reply}')
         # await update.message.reply_text(reply)
-        arxiv_id = text.split('/')[-1]
-        if arxiv_id.endswith("pdf"):
-            # Getting rid of pdf suffix.
-            arxiv_id = arxiv_id[:-4]
-
+        arxiv_id = get_arxiv_id(text)
         arxiv_info = search_arxiv([arxiv_id])
         arxiv_info[0]["summary"] = get_arxiv_summary(arxiv_info[0]) 
         await send_papers(update, arxiv_info, reply_to_message_id=msg_id)
