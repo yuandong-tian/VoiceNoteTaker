@@ -62,15 +62,16 @@ class ModelInterface:
 
         sections = paper.sections
 
-        results = []
+        results = dict()
         for sec_title, content in sections.items():
             input_all = prompt + input_data.format(section_title=sec_title, content=content)
             # print(input_all)
             output = self.call_model(input_all)
-            results.append("<b>" + sec_title + "</b>\n" + output)
+            results[sec_title] = output
+            
         return results
 
-    def summarize_keywords(self, comments : List[str]):
+    def summarize_keywords(self, comments : List[str]) -> List[str]:
         # Given comments, call the model to summarize the comments into a few keywords for arXiv search.
         prompt = '''
         Generate a few keywords to summarize the following comments. Please return the keywords in json format (e.g., ["keyword1", "keyword2", "keyword3"]).  
@@ -112,12 +113,7 @@ for sec in sections:
 
 if __name__ == "__main__":
     arxiv_link = 'https://arxiv.org/pdf/2402.18510.pdf'
-    paper = ArXiv(arxiv_link)
-    paper.download_latex()
-
-    import pdb
-    pdb.set_trace()
-
+    paper = ArXiv(arxiv_link, download=True)
     model = ModelInterface()
     summary = model.get_summary(paper)
     print(summary)

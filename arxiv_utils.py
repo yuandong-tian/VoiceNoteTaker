@@ -43,7 +43,7 @@ def expand_inputs(base_path, file_content):
     return re.sub(input_pattern, replacer, file_content)
 
 class ArXiv:
-    def __init__(self, paperlink=None):
+    def __init__(self, paperlink=None, download=False):
         if paperlink is not None:
             arxiv_id = paperlink.split('/')[-1]
             if arxiv_id.endswith("pdf"):
@@ -53,6 +53,9 @@ class ArXiv:
             self2 = ArXiv.search_arxiv([arxiv_id])[0]
             for k, v in self2.__dict__.items():
                 setattr(self, k, v)
+
+            if download:
+                self.download_latex()
 
     def download_latex(self):
         arxiv_id = self.arxiv_id
@@ -122,9 +125,27 @@ class ArXiv:
                 introduction = sec_content
             sections[sec_title] = sec_content
 
-        self.all_content = all_content
-        self.introduction = introduction
-        self.sections = sections 
+        self._all_content = all_content
+        self._introduction = introduction
+        self._sections = sections 
+    
+    @property
+    def all_content(self):
+        if not hasattr(self, "_all_content"):
+            self.download_latex()
+        return self._all_content    
+    
+    @property
+    def introduction(self):
+        if not hasattr(self, "_introduction"):
+            self.download_latex()
+        return self._introduction
+    
+    @property
+    def sections(self):
+        if not hasattr(self, "_sections"):
+            self.download_latex()
+        return self._sections
 
     @staticmethod
     def search_arxiv(keywords):
@@ -160,19 +181,15 @@ class ArXiv:
 
         return all_papers
 
-
-def paper2message(all_papers):
-    for paper in all_papers:
+    def to_message(self):
         # send the title, summary and authors of the paper as text form
-        title = paper['title']
-        abstract = paper['abstract']
-        link = paper["link"]
-        arxiv_id = paper["arxiv_id"]
-
-        yield f"<b>Title:</b> <a href='{link}'>{title}</a> ({arxiv_id}) \n<b>Authors:</b> {', '.join(paper['authors'])}\n\n<b>Abstract:</b> {abstract}\n"
-        if "summary" in paper:
-            if isinstance(paper["summary"], str):
-               yield f"<b>Summary:</b> {paper['summary']}" 
-            else:
-                for msg in paper["summary"]:
+        yield f"<b>Title:</b> <a href='{self.link}'>{self.title}</a> ({self.arxiv_id}) \n<b>Authors:</b> {', '.join(self.authors)}\n\n<b>Abstract:</b> {self.abstract}\n"
+        if hasattr(self, "summary"):
+            if isinstance(self.summary, str):
+               yield f"<b>Summary:</b> {self.summary}" 
+            elif isinstance(self.summary, list):
+                for msg in self.summary:
                     yield msg
+            elif isinstance(self.summary, dict):
+                for k, v in self.summary.items():
+                    yield f"<b>{k}</b>: {v}"
