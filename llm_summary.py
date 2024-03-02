@@ -147,8 +147,8 @@ def get_arxiv_summary(arxiv_info, reference_idea=None):
         sec_title = m.group(1)
         sec_content = m.group(2)
 
-        if sec_title == "Introduction":
-            continue
+        # if sec_title == "Introduction":
+        #     continue
         sections.append(dict(title=sec_title, content=sec_content))
 
     # Summarization of each section. 
@@ -163,14 +163,16 @@ def get_arxiv_summary(arxiv_info, reference_idea=None):
     Title: {title}
     Abstract: {abstract}
     The section title: {section_title}
-    The secont content: {content}
+    The section content: {content}
     '''
 
     result = ""
     for sec in sections:
         input_all = prompt + input_data.format(title=title, abstract=abstract, section_title=sec["title"], content=sec["content"])
+        # print(input_all)
         output = call_model(input_all)
         result += "<b>" + sec["title"] + "</b>\n" + output + "\n"
+    return result
 
 
 def summarize_keywords(comments : List[str]):
