@@ -122,7 +122,7 @@ async def check_auth(update: Update, context: CallbackContext):
 
     return user_full_name
 
-file_matcher = re.compile(r"\[ffmpeg\] Correcting container in \"(.*?)\"") 
+file_matcher = re.compile(r"Correcting container of \"(.*?)\"") 
 
 async def send_papers(update: Update, all_papers : List[ArXiv], reply_to_message_id=None):
     for paper in all_papers:
@@ -155,13 +155,16 @@ async def handle_text_message(update: Update, context: CallbackContext):
         print(f"[{user_full_name}] {text}")
         message = await update.message.reply_text(f"Converting youtube link to m4a file..", reply_to_message_id=msg_id)
         msg_id = message.message_id
-        output = check_output(f"python -m youtube_dl -f 140 \"{text}\"", shell=True).decode("utf-8")
+        output = check_output(f"yt-dlp --cookies ../youtube_cookie.txt -f 140 {text}", shell=True).decode("utf-8")
+        print(output)
         for line in output.split("\n"):
-            m = file_matcher.match(line)
+            m = file_matcher.search(line)
             if m:
                 output_file = m.group(1).strip()
 
         await update.message.reply_audio(open(output_file, "rb"), reply_to_message_id=msg_id)
+        # Delete the audio to save space. Telegram already save the audio.
+        os.remove(output_file)
 
     elif text.startswith("a:"):
         _, keywords = text.split(":", 1)
