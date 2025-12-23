@@ -1,5 +1,6 @@
 from typing import List
 import os
+import sys
 import tempfile
 import json
 from telegram import Update, BotCommand, Bot
@@ -13,9 +14,14 @@ import core
 from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
 import requests
 from bs4 import BeautifulSoup
-from google import genai
 
 from llm_summary import ModelInterface
+
+LLM_UTILS_DIR = os.path.join(os.path.dirname(__file__), "..", "llm_utils")
+if LLM_UTILS_DIR not in sys.path:
+    sys.path.insert(0, LLM_UTILS_DIR)
+
+from llm_util import transcribe_audio_gemini
 from arxiv_utils import ArXiv
 from get_stock_info import get_sentiment
 
@@ -36,7 +42,6 @@ writer_mode = False
 print(f"Writer's mode: {writer_mode}")
 
 model = ModelInterface()
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def load_env_file(path: str, base_env: dict) -> dict:
     if not path or not os.path.exists(path):
@@ -309,22 +314,10 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
     with tempfile.NamedTemporaryFile('wb+', suffix=f'.ogg') as temp_audio_file:
         temp_audio_file.write(voice_data)
         temp_audio_file.seek(0)
-        with tempfile.NamedTemporaryFile(suffix=f'.{OUTPUT_FORMAT}', delete=False) as temp_output_file:
+        with tempfile.NamedTemporaryFile(suffix=f'.{OUTPUT_FORMAT}') as temp_output_file:
             output_path = temp_output_file.name
             convert_audio_file_to_format(temp_audio_file.name, output_path, OUTPUT_FORMAT)
-    try:
-        gemini_file = gemini_client.files.upload(file=output_path)
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                "Transcribe this audio clip. The audio clip can be either in English or in Simplified Chinese, keep the language when outputting",
-                gemini_file,
-            ],
-        )
-        transcribed_text = response.text.strip()
-    finally:
-        if output_path and os.path.exists(output_path):
-            os.remove(output_path)
+            transcribed_text = transcribe_audio_gemini(output_path)
     print(f'[{user_full_name}] {transcribed_text}')
     await update.message.reply_text("Transcribed text:")
     await update.message.reply_text(transcribed_text)
