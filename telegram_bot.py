@@ -6,19 +6,25 @@ from telegram import Update, BotCommand, Bot
 from telegram.constants import ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, Application, PicklePersistence
 import telegram.ext.filters as filters
-from subprocess import check_output
+from subprocess import check_output, run, CalledProcessError
 import re
 
 import core
 from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
 import requests
 from bs4 import BeautifulSoup
+from google import genai
 
 from llm_summary import ModelInterface
 from arxiv_utils import ArXiv
 from get_stock_info import get_sentiment
 
 OUTPUT_FORMAT = "mp3"
+TELEGRAM_MESSAGE_LIMIT = 4096
+
+DEEP_RESEARCH_DIR = os.environ.get("DEEP_RESEARCH_DIR", "/home/yuandong/Tongyi/inference")
+DEEP_RESEARCH_ENV_FILE = os.environ.get("DEEP_RESEARCH_ENV_FILE", "/home/yuandong/Tongyi/.env")
+DEEP_RESEARCH_MODEL = os.environ.get("DEEP_RESEARCH_MODEL", "")
 
 telegram_api_token = os.environ.get('TELEGRAM_BOT_TOKEN')
 print(f'Bot token: {telegram_api_token}')
@@ -30,6 +36,73 @@ writer_mode = False
 print(f"Writer's mode: {writer_mode}")
 
 model = ModelInterface()
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+def load_env_file(path: str, base_env: dict) -> dict:
+    if not path or not os.path.exists(path):
+        return base_env
+    env = dict(base_env)
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'").strip('"')
+            env.setdefault(key, value)
+    return env
+
+def split_for_telegram(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> List[str]:
+    if not text:
+        return [""]
+    chunks = []
+    current = []
+    current_len = 0
+    for paragraph in text.splitlines(keepends=True):
+        if current_len + len(paragraph) > limit and current:
+            chunks.append("".join(current).rstrip())
+            current = []
+            current_len = 0
+        if len(paragraph) > limit:
+            for i in range(0, len(paragraph), limit):
+                chunks.append(paragraph[i:i + limit].rstrip())
+            continue
+        current.append(paragraph)
+        current_len += len(paragraph)
+    if current:
+        chunks.append("".join(current).rstrip())
+    return chunks
+
+def run_deep_research(query: str) -> str:
+    run_dir = DEEP_RESEARCH_DIR
+    script_path = os.path.join(run_dir, "run_deep_research.py")
+    if not os.path.exists(script_path):
+        raise FileNotFoundError(f"Deep research script not found at {script_path}")
+
+    with tempfile.NamedTemporaryFile(prefix="deep_research_", suffix=".json", delete=False) as output_file:
+        output_path = output_file.name
+
+    cmd = [
+        "python",
+        "-u",
+        script_path,
+        "--query",
+        query,
+        "--output_file",
+        output_path,
+    ]
+    if DEEP_RESEARCH_MODEL:
+        cmd.extend(["--model", DEEP_RESEARCH_MODEL])
+
+    env = load_env_file(DEEP_RESEARCH_ENV_FILE, os.environ)
+    result = run(cmd, capture_output=True, text=True, cwd=run_dir, env=env, check=False)
+    if result.returncode != 0:
+        raise CalledProcessError(result.returncode, cmd, output=result.stdout, stderr=result.stderr)
+
+    with open(output_path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return payload.get("final_answer") or payload.get("prediction") or ""
 
 async def start(update: Update, context: CallbackContext):
     '''
@@ -122,7 +195,9 @@ async def check_auth(update: Update, context: CallbackContext):
 
     return user_full_name
 
-file_matcher = re.compile(r"Correcting container of \"(.*?)\"") 
+file_matcher = re.compile(r"Correcting container of \"(.*)\"") 
+file_matcher2 = re.compile(r"\[download\] Destination: (.*)")
+file_matcher3 = re.compile(r"\[download\] (.*) has already been downloaded")
 
 async def send_papers(update: Update, all_papers : List[ArXiv], reply_to_message_id=None):
     for paper in all_papers:
@@ -150,7 +225,7 @@ async def handle_text_message(update: Update, context: CallbackContext):
         paper.summary = summary
         await send_papers(update, [paper], reply_to_message_id=msg_id)
         
-    elif text.startswith("https://www.youtube.com/watch?"):
+    elif text.startswith("https://www.youtube.com/watch?") or text.startswith("https://youtu.be/"):
         # convert youtube to music and output
         print(f"[{user_full_name}] {text}")
         message = await update.message.reply_text(f"Converting youtube link to m4a file..", reply_to_message_id=msg_id)
@@ -161,6 +236,19 @@ async def handle_text_message(update: Update, context: CallbackContext):
             m = file_matcher.search(line)
             if m:
                 output_file = m.group(1).strip()
+                break
+
+            m = file_matcher2.search(line)
+            if m:
+                output_file = m.group(1).strip()
+                break
+
+            m = file_matcher3.search(line)
+            if m:
+                output_file = m.group(1).strip()
+                break
+
+        print("Extracted: \"" + output_file + "\"")
 
         await update.message.reply_audio(open(output_file, "rb"), reply_to_message_id=msg_id)
         # Delete the audio to save space. Telegram already save the audio.
@@ -221,12 +309,39 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
     with tempfile.NamedTemporaryFile('wb+', suffix=f'.ogg') as temp_audio_file:
         temp_audio_file.write(voice_data)
         temp_audio_file.seek(0)
-        with tempfile.NamedTemporaryFile(suffix=f'.{OUTPUT_FORMAT}') as temp_output_file:
-            convert_audio_file_to_format(temp_audio_file.name, temp_output_file.name, OUTPUT_FORMAT)
-            transcribed_text = core.transcribe_voice_message(temp_output_file.name)
+        with tempfile.NamedTemporaryFile(suffix=f'.{OUTPUT_FORMAT}', delete=False) as temp_output_file:
+            output_path = temp_output_file.name
+            convert_audio_file_to_format(temp_audio_file.name, output_path, OUTPUT_FORMAT)
+    try:
+        gemini_file = gemini_client.files.upload(file=output_path)
+        response = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                "Transcribe this audio clip. The audio clip can be either in English or in Simplified Chinese, keep the language when outputting",
+                gemini_file,
+            ],
+        )
+        transcribed_text = response.text.strip()
+    finally:
+        if output_path and os.path.exists(output_path):
+            os.remove(output_path)
     print(f'[{user_full_name}] {transcribed_text}')
     await update.message.reply_text("Transcribed text:")
     await update.message.reply_text(transcribed_text)
+
+    msg_id = update.message.message_id
+    await update.message.reply_text("Starting deep research...", reply_to_message_id=msg_id)
+    try:
+        research_answer = run_deep_research(transcribed_text)
+    except Exception as exc:
+        await update.message.reply_text(f"Deep research failed: {exc}", reply_to_message_id=msg_id)
+        return
+
+    if not research_answer:
+        await update.message.reply_text("Deep research returned no answer.", reply_to_message_id=msg_id)
+    else:
+        for chunk in split_for_telegram(research_answer):
+            await update.message.reply_text(chunk, reply_to_message_id=msg_id)
 
     global writer_mode
 
