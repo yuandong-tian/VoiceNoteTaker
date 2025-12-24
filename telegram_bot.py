@@ -5,7 +5,15 @@ import tempfile
 import json
 from telegram import Update, BotCommand, Bot
 from telegram.constants import ParseMode
-from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, Application, PicklePersistence
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    CallbackContext,
+    Application,
+    PicklePersistence,
+    PersistenceInput,
+)
 import telegram.ext.filters as filters
 from subprocess import check_output, run, CalledProcessError
 import re
@@ -15,13 +23,11 @@ from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
 import requests
 from bs4 import BeautifulSoup
 
-from llm_summary import ModelInterface
-
 LLM_UTILS_DIR = os.path.join(os.path.dirname(__file__), "..", "llm_utils")
 if LLM_UTILS_DIR not in sys.path:
     sys.path.insert(0, LLM_UTILS_DIR)
 
-from llm_util import transcribe_audio_gemini
+from llm_util import transcribe_audio_gemini, LLMCaller
 from arxiv_utils import ArXiv
 from get_stock_info import get_sentiment
 
@@ -39,9 +45,11 @@ telegram_allow_user_name = os.environ.get("TELEGRAM_ALLOW_USER")
 print(f"Allow user name: {telegram_allow_user_name}")
 
 writer_mode = False
+use_context_summary = True
 print(f"Writer's mode: {writer_mode}")
+print(f"Context summary: {use_context_summary}")
 
-model = ModelInterface()
+llm_caller = LLMCaller(use_cache=True, default_model="gemini-2.5-flash")
 
 def load_env_file(path: str, base_env: dict) -> dict:
     if not path or not os.path.exists(path):
@@ -109,6 +117,58 @@ def run_deep_research(query: str) -> str:
         payload = json.load(handle)
     return payload.get("final_answer") or payload.get("prediction") or ""
 
+async def summarize_past_discussions(snippets: List[str]) -> str:
+    if not snippets:
+        return ""
+    prompt = (
+        "Summarize the following prior discussion snippets into a brief context (2-5 sentences). "
+        "Focus on facts, preferences, and ongoing tasks. Do not include the new query.\n\n"
+        "Snippets:\n"
+        + "\n".join(f"- {snippet}" for snippet in snippets)
+    )
+    try:
+        summary, _ = await llm_caller.generate_async(prompt)
+    except Exception:
+        return ""
+    return summary.strip()
+
+async def summarize_keywords(comments: List[str]) -> List[str]:
+    prompt = (
+        "Generate a few keywords to summarize the following comments. "
+        "Please return the keywords in json format (e.g., [\"keyword1\", \"keyword2\"]).\n\n"
+        "Comments:\n"
+        + "\n".join(comments)
+    )
+    keywords, _ = await llm_caller.generate_async(prompt, parse_json=True)
+    return keywords
+
+async def summarize_paper_sections(paper: ArXiv, reference_idea: str | None = None) -> dict:
+    prompt = (
+        "Generate a summary of the following section. The summary should be 1-2 sentences, "
+        "be concise and informative.\n"
+    )
+    if reference_idea is not None:
+        prompt += (
+            "Also compare the paper with a reference idea. Summarize how the reference idea "
+            "is different from the paragraph, if the reference idea is relevant. "
+            f"Reference idea: {reference_idea}\n"
+        )
+
+    sections = paper.sections
+    results = {}
+    for sec_title, content in sections.items():
+        input_all = f"{prompt}\nTitle: {sec_title}\nContent: {content}"
+        summary, _ = await llm_caller.generate_async(input_all)
+        results[sec_title] = summary
+    return results
+
+def append_chat_history(context: CallbackContext, update: Update, text: str) -> None:
+    history = context.user_data.setdefault("chat_history", [])
+    reply = update.message.reply_to_message
+    if reply and reply.text:
+        history.append(reply.text)
+    history.append(text)
+
 async def start(update: Update, context: CallbackContext):
     '''
         Start the bot
@@ -135,7 +195,11 @@ async def help(update: Update, context: CallbackContext):
 *Commands*: 
 /help: Display this help message\.
 /data: Display any information we had about you from our end\.
-/clear: Clear any information we had about you from our end\.""", parse_mode='MarkdownV2')
+/clear: Clear any information we had about you from our end\.
+/toggle_writer: Toggle writer's mode\. 
+/toggle_context_summary: Toggle context summary for deep research\.
+
+""", parse_mode='MarkdownV2')
 
 async def data(update: Update, context: CallbackContext):
     """
@@ -177,6 +241,18 @@ async def toggle_writer(update: Update, context: CallbackContext):
     writer_mode = not writer_mode
     await update.message.reply_text(f"Writer's mode is set to be {writer_mode}")
 
+async def toggle_context_summary(update: Update, context: CallbackContext):
+    """
+    Toggle context summary.
+    """
+    user_full_name = await check_auth(update, context)
+    if user_full_name is None:
+        return
+
+    global use_context_summary
+    use_context_summary = not use_context_summary
+    await update.message.reply_text(f"Context summary is set to be {use_context_summary}")
+
 # TODO: send out daily summaries to users.
 async def check_auth(update: Update, context: CallbackContext):
     chat_id = context._chat_id
@@ -197,6 +273,8 @@ async def check_auth(update: Update, context: CallbackContext):
         context.user_data['user_id'] = user_id
     if 'history' not in context.user_data:
         context.user_data['history'] = []
+    if 'chat_history' not in context.user_data:
+        context.user_data['chat_history'] = []
 
     return user_full_name
 
@@ -218,7 +296,8 @@ async def handle_text_message(update: Update, context: CallbackContext):
     if user_full_name is None:
         return 
 
-    text = update.message.text 
+    text = update.message.text
+    append_chat_history(context, update, text)
     msg_id = update.message.message_id
 
     if text.startswith("https://arxiv.org/"):
@@ -226,7 +305,7 @@ async def handle_text_message(update: Update, context: CallbackContext):
         # print(f'[{user_full_name}] {reply}')
         # await update.message.reply_text(reply)
         paper = ArXiv(text)
-        summary = model.get_summary(paper)
+        summary = await summarize_paper_sections(paper)
         paper.summary = summary
         await send_papers(update, [paper], reply_to_message_id=msg_id)
         
@@ -275,7 +354,7 @@ async def handle_text_message(update: Update, context: CallbackContext):
 
         # Then send the messages to LLM API to start the brainstorming process.
         backward_chain = backward_chain[::-1]
-        keywords = model.summarize_keywords(backward_chain)
+        keywords = await summarize_keywords(backward_chain)
         papers = ArXiv.search_arxiv(keywords)
         message = await update.message.reply_text(f"Keywords: {keywords}. Find {len(papers)} papers", reply_to_message_id=msg_id)
         msg_id = message.message_id
@@ -283,7 +362,7 @@ async def handle_text_message(update: Update, context: CallbackContext):
         reference_idea = " ".join(backward_chain)
         for paper in papers:
             # Extract their summary
-            paper.summary = model.get_summary(paper, reference_idea=reference_idea)
+            paper.summary = await summarize_paper_sections(paper, reference_idea=reference_idea)
             await send_papers(update, [paper], reply_to_message_id=msg_id)
 
     elif text.startswith("search"):
@@ -310,7 +389,6 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
     # Download the voice message
     voice_data = await voice_file.download_as_bytearray()
     
-    # Call the Whisper ASR API
     with tempfile.NamedTemporaryFile('wb+', suffix=f'.ogg') as temp_audio_file:
         temp_audio_file.write(voice_data)
         temp_audio_file.seek(0)
@@ -325,7 +403,22 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
     msg_id = update.message.message_id
     await update.message.reply_text("Starting deep research...", reply_to_message_id=msg_id)
     try:
-        research_answer = run_deep_research(transcribed_text)
+        history = context.user_data.setdefault("chat_history", [])
+        past_snippets = history[-5:]
+        context_summary = await summarize_past_discussions(past_snippets) if use_context_summary else ""
+        append_chat_history(context, update, transcribed_text)
+        if context_summary:
+            research_query = (
+                "Context summary of prior discussions:\n"
+                f"{context_summary}\n\n"
+                "Current query:\n"
+                f"{transcribed_text}"
+            )
+        else:
+            research_query = transcribed_text
+        print(f'[{user_full_name}] Deep research query:\n{research_query}')
+        research_answer = run_deep_research(research_query)
+        append_chat_history(context, update, research_answer)
     except Exception as exc:
         await update.message.reply_text(f"Deep research failed: {exc}", reply_to_message_id=msg_id)
         return
@@ -356,10 +449,13 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
         await update.message.reply_text(f"Paraphrased using {model.upper()}:")
         await update.message.reply_text(paraphrased_text)
 
-commands = [start, help, clear, data, toggle_writer]
+commands = [start, help, clear, data, toggle_writer, toggle_context_summary]
 
 def main():
-    persistence = PicklePersistence(filepath="gpt_archive.pickle")
+    persistence = PicklePersistence(
+        filepath="gpt_archive.pickle",
+        store_data=PersistenceInput(user_data=True, chat_data=True, bot_data=False),
+    )
     application = Application.builder().token(telegram_api_token).persistence(persistence).build()
 
     # on different commands - answer in Telegram
