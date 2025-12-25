@@ -1,12 +1,9 @@
 from typing import List
 import os
-import sys
 import tempfile
 import json
 from telegram import Update, BotCommand, Bot
-from telegram.constants import ParseMode
 from telegram.ext import (
-    Updater,
     CommandHandler,
     MessageHandler,
     CallbackContext,
@@ -15,23 +12,10 @@ from telegram.ext import (
     PersistenceInput,
 )
 import telegram.ext.filters as filters
-from subprocess import check_output, run, CalledProcessError
-import re
+from subprocess import run, CalledProcessError
 
-import core
-from core import paraphrase_text, convert_audio_file_to_format, preprocess_text
-import requests
-from bs4 import BeautifulSoup
-
-LLM_UTILS_DIR = os.path.join(os.path.dirname(__file__), "..", "llm_utils")
-if LLM_UTILS_DIR not in sys.path:
-    sys.path.insert(0, LLM_UTILS_DIR)
-
-from llm_util import transcribe_audio_gemini, LLMCaller
-from arxiv_utils import ArXiv
-from get_stock_info import get_sentiment
-
-OUTPUT_FORMAT = "mp3"
+from bot_core import BotCore
+from llm_service import LLMService
 TELEGRAM_MESSAGE_LIMIT = 4096
 
 DEEP_RESEARCH_DIR = os.environ.get("DEEP_RESEARCH_DIR", "/home/yuandong/Tongyi/inference")
@@ -44,12 +28,6 @@ print(f'Bot token: {telegram_api_token}')
 telegram_allow_user_name = os.environ.get("TELEGRAM_ALLOW_USER")
 print(f"Allow user name: {telegram_allow_user_name}")
 
-writer_mode = False
-use_context_summary = True
-print(f"Writer's mode: {writer_mode}")
-print(f"Context summary: {use_context_summary}")
-
-llm_caller = LLMCaller(use_cache=True, default_model="gemini-2.5-flash")
 
 def load_env_file(path: str, base_env: dict) -> dict:
     if not path or not os.path.exists(path):
@@ -117,57 +95,9 @@ def run_deep_research(query: str) -> str:
         payload = json.load(handle)
     return payload.get("final_answer") or payload.get("prediction") or ""
 
-async def summarize_past_discussions(snippets: List[str]) -> str:
-    if not snippets:
-        return ""
-    prompt = (
-        "Summarize the following prior discussion snippets into a brief context (2-5 sentences). "
-        "Focus on facts, preferences, and ongoing tasks. Do not include the new query.\n\n"
-        "Snippets:\n"
-        + "\n".join(f"- {snippet}" for snippet in snippets)
-    )
-    try:
-        summary, _ = await llm_caller.generate_async(prompt)
-    except Exception:
-        return ""
-    return summary.strip()
+llm_service = LLMService(default_model="gemini-2.5-flash", use_cache=True)
+bot_core = BotCore(llm_service=llm_service, deep_research_runner=run_deep_research)
 
-async def summarize_keywords(comments: List[str]) -> List[str]:
-    prompt = (
-        "Generate a few keywords to summarize the following comments. "
-        "Please return the keywords in json format (e.g., [\"keyword1\", \"keyword2\"]).\n\n"
-        "Comments:\n"
-        + "\n".join(comments)
-    )
-    keywords, _ = await llm_caller.generate_async(prompt, parse_json=True)
-    return keywords
-
-async def summarize_paper_sections(paper: ArXiv, reference_idea: str | None = None) -> dict:
-    prompt = (
-        "Generate a summary of the following section. The summary should be 1-2 sentences, "
-        "be concise and informative.\n"
-    )
-    if reference_idea is not None:
-        prompt += (
-            "Also compare the paper with a reference idea. Summarize how the reference idea "
-            "is different from the paragraph, if the reference idea is relevant. "
-            f"Reference idea: {reference_idea}\n"
-        )
-
-    sections = paper.sections
-    results = {}
-    for sec_title, content in sections.items():
-        input_all = f"{prompt}\nTitle: {sec_title}\nContent: {content}"
-        summary, _ = await llm_caller.generate_async(input_all)
-        results[sec_title] = summary
-    return results
-
-def append_chat_history(context: CallbackContext, update: Update, text: str) -> None:
-    history = context.user_data.setdefault("chat_history", [])
-    reply = update.message.reply_to_message
-    if reply and reply.text:
-        history.append(reply.text)
-    history.append(text)
 
 async def start(update: Update, context: CallbackContext):
     '''
@@ -235,10 +165,7 @@ async def toggle_writer(update: Update, context: CallbackContext):
     user_full_name = await check_auth(update, context)
     if user_full_name is None:
         return 
-
-    global writer_mode
-
-    writer_mode = not writer_mode
+    writer_mode = bot_core.toggle_writer(context.user_data)
     await update.message.reply_text(f"Writer's mode is set to be {writer_mode}")
 
 async def toggle_context_summary(update: Update, context: CallbackContext):
@@ -249,8 +176,7 @@ async def toggle_context_summary(update: Update, context: CallbackContext):
     if user_full_name is None:
         return
 
-    global use_context_summary
-    use_context_summary = not use_context_summary
+    use_context_summary = bot_core.toggle_context_summary(context.user_data)
     await update.message.reply_text(f"Context summary is set to be {use_context_summary}")
 
 # TODO: send out daily summaries to users.
@@ -271,24 +197,18 @@ async def check_auth(update: Update, context: CallbackContext):
         context.user_data['user_full_name'] = user_full_name
     if 'user_id' not in context.user_data:
         context.user_data['user_id'] = user_id
-    if 'history' not in context.user_data:
-        context.user_data['history'] = []
-    if 'chat_history' not in context.user_data:
-        context.user_data['chat_history'] = []
+    bot_core.ensure_state(context.user_data)
 
     return user_full_name
 
-file_matcher = re.compile(r"Correcting container of \"(.*)\"") 
-file_matcher2 = re.compile(r"\[download\] Destination: (.*)")
-file_matcher3 = re.compile(r"\[download\] (.*) has already been downloaded")
-
-async def send_papers(update: Update, all_papers : List[ArXiv], reply_to_message_id=None):
-    for paper in all_papers:
-        for msg in paper.to_message(): 
-            # reply to the previous message
-            # get message id of the previous message
-            message = await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_to_message_id=reply_to_message_id)
-            reply_to_message_id = message.message_id
+def build_reply_chain(update: Update) -> List[str]:
+    previous_message = update.message.reply_to_message
+    backward_chain = []
+    while previous_message:
+        if previous_message.text:
+            backward_chain.append(previous_message.text)
+        previous_message = previous_message.reply_to_message
+    return backward_chain[::-1]
 
 
 async def handle_text_message(update: Update, context: CallbackContext):
@@ -297,82 +217,23 @@ async def handle_text_message(update: Update, context: CallbackContext):
         return 
 
     text = update.message.text
-    append_chat_history(context, update, text)
     msg_id = update.message.message_id
-
-    if text.startswith("https://arxiv.org/"):
-        # reply = f"Receive arXiv: {text}"
-        # print(f'[{user_full_name}] {reply}')
-        # await update.message.reply_text(reply)
-        paper = ArXiv(text)
-        summary = await summarize_paper_sections(paper)
-        paper.summary = summary
-        await send_papers(update, [paper], reply_to_message_id=msg_id)
-        
-    elif text.startswith("https://www.youtube.com/watch?") or text.startswith("https://youtu.be/"):
-        # convert youtube to music and output
-        print(f"[{user_full_name}] {text}")
-        message = await update.message.reply_text(f"Converting youtube link to m4a file..", reply_to_message_id=msg_id)
-        msg_id = message.message_id
-        output = check_output(f"yt-dlp --cookies ../youtube_cookie.txt -f 140 {text}", shell=True).decode("utf-8")
-        print(output)
-        for line in output.split("\n"):
-            m = file_matcher.search(line)
-            if m:
-                output_file = m.group(1).strip()
-                break
-
-            m = file_matcher2.search(line)
-            if m:
-                output_file = m.group(1).strip()
-                break
-
-            m = file_matcher3.search(line)
-            if m:
-                output_file = m.group(1).strip()
-                break
-
-        print("Extracted: \"" + output_file + "\"")
-
-        await update.message.reply_audio(open(output_file, "rb"), reply_to_message_id=msg_id)
-        # Delete the audio to save space. Telegram already save the audio.
-        os.remove(output_file)
-
-    elif text.startswith("a:"):
-        _, keywords = text.split(":", 1)
-        papers = ArXiv.search_arxiv(keywords.split())
-        await send_papers(update, papers, reply_to_message_id=msg_id)
-
-    elif text == "bs":
-        # Start the brainstorming process
-        # Backward trace the messages that the current messages are replying to. 
-        previous_message = update.message.reply_to_message
-        backward_chain = []
-        while previous_message:
-            backward_chain.append(previous_message["text"])
-            previous_message = previous_message.reply_to_message
-
-        # Then send the messages to LLM API to start the brainstorming process.
-        backward_chain = backward_chain[::-1]
-        keywords = await summarize_keywords(backward_chain)
-        papers = ArXiv.search_arxiv(keywords)
-        message = await update.message.reply_text(f"Keywords: {keywords}. Find {len(papers)} papers", reply_to_message_id=msg_id)
-        msg_id = message.message_id
-
-        reference_idea = " ".join(backward_chain)
-        for paper in papers:
-            # Extract their summary
-            paper.summary = await summarize_paper_sections(paper, reference_idea=reference_idea)
-            await send_papers(update, [paper], reply_to_message_id=msg_id)
-
-    elif text.startswith("search"):
-        # search twitter
-        item = text.split(" ", 1)[1].strip()
-        overall_sentiment, overall_output = get_sentiment(item)
-        overall_output = overall_output.replace("[", "<b>").replace("]", "</b>")
-        await update.message.reply_text(overall_output, parse_mode=ParseMode.HTML, reply_to_message_id=msg_id)
-    else:
-        await update.message.reply_text("I don't understand", reply_to_message_id=msg_id)
+    reply_text = update.message.reply_to_message.text if update.message.reply_to_message else None
+    reply_chain = build_reply_chain(update) if text == "bs" else None
+    responses = await bot_core.handle_text(context.user_data, text, reply_text=reply_text, reply_chain=reply_chain)
+    for response in responses:
+        if response.kind == "audio" and response.file_path:
+            await update.message.reply_audio(open(response.file_path, "rb"), reply_to_message_id=msg_id)
+            if response.cleanup_path:
+                os.remove(response.file_path)
+            continue
+        if response.kind == "text" and response.text is not None:
+            for chunk in split_for_telegram(response.text):
+                await update.message.reply_text(
+                    chunk,
+                    parse_mode=response.parse_mode,
+                    reply_to_message_id=msg_id,
+                )
 
 async def warn_if_not_voice_message(update: Update, context: CallbackContext):
     if not update.message.voice:
@@ -385,69 +246,31 @@ async def transcribe_voice_message(update: Update, context: CallbackContext):
     
     file_id = update.message.voice.file_id
     voice_file = await context.bot.get_file(file_id)
-    
-    # Download the voice message
     voice_data = await voice_file.download_as_bytearray()
-    
-    with tempfile.NamedTemporaryFile('wb+', suffix=f'.ogg') as temp_audio_file:
-        temp_audio_file.write(voice_data)
-        temp_audio_file.seek(0)
-        with tempfile.NamedTemporaryFile(suffix=f'.{OUTPUT_FORMAT}') as temp_output_file:
-            output_path = temp_output_file.name
-            convert_audio_file_to_format(temp_audio_file.name, output_path, OUTPUT_FORMAT)
-            transcribed_text = transcribe_audio_gemini(output_path)
-    print(f'[{user_full_name}] {transcribed_text}')
-    await update.message.reply_text("Transcribed text:")
-    await update.message.reply_text(transcribed_text)
 
     msg_id = update.message.message_id
-    await update.message.reply_text("Starting deep research...", reply_to_message_id=msg_id)
+    reply_text = update.message.reply_to_message.text if update.message.reply_to_message else None
     try:
-        history = context.user_data.setdefault("chat_history", [])
-        past_snippets = history[-5:]
-        context_summary = await summarize_past_discussions(past_snippets) if use_context_summary else ""
-        append_chat_history(context, update, transcribed_text)
-        if context_summary:
-            research_query = (
-                "Context summary of prior discussions:\n"
-                f"{context_summary}\n\n"
-                "Current query:\n"
-                f"{transcribed_text}"
-            )
-        else:
-            research_query = transcribed_text
-        print(f'[{user_full_name}] Deep research query:\n{research_query}')
-        research_answer = run_deep_research(research_query)
-        append_chat_history(context, update, research_answer)
+        result = await bot_core.handle_voice(
+            context.user_data,
+            voice_data,
+            reply_text=reply_text,
+            log_research_query=lambda query: print(
+                f'[{user_full_name}] Deep research query:\n{query}'
+            ),
+            message_date=update.message.date,
+        )
     except Exception as exc:
         await update.message.reply_text(f"Deep research failed: {exc}", reply_to_message_id=msg_id)
         return
 
-    if not research_answer:
-        await update.message.reply_text("Deep research returned no answer.", reply_to_message_id=msg_id)
-    else:
-        for chunk in split_for_telegram(research_answer):
-            await update.message.reply_text(chunk, reply_to_message_id=msg_id)
+    if result.transcribed_text:
+        print(f'[{user_full_name}] {result.transcribed_text}')
 
-    global writer_mode
-
-    if writer_mode:
-        # output a json list with content and tag
-        preprocessed_text = preprocess_text(transcribed_text)
-        print(f'[{user_full_name}] {preprocessed_text}')
-        result_obj = json.loads(preprocessed_text)
-
-        model = 'gpt-3.5-turbo' if result_obj['tag'] == '聊天' else 'gpt-4'
-        result_obj['model'] = model
-        result_obj['transcribed'] = transcribed_text
-        print(f'[{user_full_name}] {result_obj}')
-        paraphrased_text = paraphrase_text(result_obj['content'], model)
-        result_obj['paraphrased'] = paraphrased_text
-        result_obj['date'] = update.message.date
-        print(f'[{user_full_name}] {paraphrased_text}')
-        context.user_data['history'].append(result_obj)
-        await update.message.reply_text(f"Paraphrased using {model.upper()}:")
-        await update.message.reply_text(paraphrased_text)
+    for response in result.responses:
+        if response.kind == "text" and response.text is not None:
+            for chunk in split_for_telegram(response.text):
+                await update.message.reply_text(chunk, reply_to_message_id=msg_id)
 
 commands = [start, help, clear, data, toggle_writer, toggle_context_summary]
 
